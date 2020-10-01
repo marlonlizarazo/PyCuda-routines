@@ -1,0 +1,68 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Sep 30 16:05:00 2020
+
+@author: MJLU
+Matrix-Vector multiplication in Pycuda
+"""
+import pycuda.autoinit
+import pycuda.driver as drv
+from pycuda import gpuarray
+from pycuda.compiler import SourceModule
+import numpy as np
+from time import time
+import pdb
+
+
+ker = SourceModule('''
+// row-column dot-product for matrix multiplication
+__device__ float rowcol_dot(float *matrix_a, float *matrix_b, int row, int col, int M, int K)
+{
+	float val = 0;
+	
+	for (int k=0; k < M; k++)
+	{
+        val += matrix_a[ row*M + k ] * matrix_b[ col + k*K];
+	}
+	
+	return(val);
+
+}
+
+// matrix multiplication kernel that is parallelized over row/column tuples.
+__global__ void matrix_mult_ker(float * matrix_a, float * matrix_b, float * output_matrix, int M, int K)
+{
+
+    int row = blockIdx.x*blockDim.x + threadIdx.x;
+    int col = blockIdx.y*blockDim.y + threadIdx.y;
+
+	output_matrix[col + row*K] = rowcol_dot(matrix_a, matrix_b, row, col, M, K);
+
+}
+''')
+
+matrix_ker = ker.get_function('matrix_mult_ker')
+M=32 #Rows
+N=M #Cols
+K=32 #NoElements
+a = np.float32([range(1,M+1)] * N)
+b = np.float32([range(1,K+1)] * N)
+c = np.matmul(a, b)
+t1=time()
+c = np.matmul(a, b)
+t2=time()
+t3=time()
+#pdb.set_trace() #n completarejecucuion #c sgtelinea
+a_gpu = gpuarray.to_gpu(a)
+b_gpu = gpuarray.to_gpu(b)
+c_gpu = gpuarray.empty_like(b_gpu)
+
+matrix_ker(a_gpu, b_gpu, c_gpu, np.int32(M),np.int32(K), block=(M,K,1), grid=(1,1,1)) #MAX dim 32*32
+
+t4=time()
+ci_gpu=c_gpu.get()
+assert(np.allclose(c_gpu.get(), c) )
+print('Time in CPU',t2-t1)
+print('CPU',c)
+print('Time in GPU',t4-t3)
+print('GPU',c_gpu.get())
